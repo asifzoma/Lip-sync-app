@@ -1,155 +1,246 @@
-
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { FileUpload } from './components/FileUpload';
-import { VideoPlayer } from './components/VideoPlayer';
-import { Loader } from './components/Loader';
-import { generateLipSyncVideo } from './services/geminiService';
+import { GenerationCard } from './components/GenerationCard';
+import { startVideoGeneration, checkVideoGenerationStatus, downloadVideo, detectGenderFromImage } from './services/geminiService';
 import { LOADING_MESSAGES } from './constants';
-import type { AppState } from './types';
-import { Status } from './types';
-
+import { Gender, GenerationJob, Status } from './types';
+import { Loader } from './components/Loader';
+import { VoiceSelector } from './components/VoiceSelector';
 
 const App: React.FC = () => {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [script, setScript] = useState<string>('');
-  const [appState, setAppState] = useState<AppState>({ status: Status.IDLE });
-  const [loadingMessage, setLoadingMessage] = useState<string>(LOADING_MESSAGES[0]);
+  const [jobs, setJobs] = useState<GenerationJob[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [gender, setGender] = useState<Gender | null>(null);
+  const [isDetectingGender, setIsDetectingGender] = useState(false);
+  const [genderError, setGenderError] = useState<string | null>(null);
 
+  // Polling effect to check on loading jobs
   useEffect(() => {
-    if (appState.status === Status.LOADING) {
-      const interval = setInterval(() => {
-        setLoadingMessage(prev => {
-          const currentIndex = LOADING_MESSAGES.indexOf(prev);
-          const nextIndex = (currentIndex + 1) % LOADING_MESSAGES.length;
-          return LOADING_MESSAGES[nextIndex];
-        });
-      }, 2500);
-      return () => clearInterval(interval);
-    }
-  }, [appState.status]);
+    const interval = setInterval(() => {
+      jobs.forEach(job => {
+        if (job.status === Status.LOADING && job.operation) {
+          checkVideoGenerationStatus(job.operation)
+            .then(updatedOperation => {
+              // Update progress message randomly to show activity
+              setJobs(prevJobs => prevJobs.map(j =>
+                j.id === job.id ? { ...j, operation: updatedOperation, progressMessage: LOADING_MESSAGES[Math.floor(Math.random() * LOADING_MESSAGES.length)] } : j
+              ));
 
-  const handleImageChange = (file: File | null) => {
+              if (updatedOperation.done) {
+                const downloadLink = updatedOperation.response?.generatedVideos?.[0]?.video?.uri;
+                if (downloadLink) {
+                  downloadVideo(downloadLink)
+                    .then(videoUrl => {
+                      setJobs(prevJobs => prevJobs.map(j =>
+                        j.id === job.id ? { ...j, status: Status.SUCCESS, videoUrl: videoUrl, operation: undefined } : j
+                      ));
+                    })
+                    .catch(err => {
+                       setJobs(prevJobs => prevJobs.map(j =>
+                        j.id === job.id ? { ...j, status: Status.ERROR, error: err.message, operation: undefined } : j
+                      ));
+                    });
+                } else {
+                  const errorMessage = updatedOperation.error?.message || "Generation finished but no video was returned.";
+                  setJobs(prevJobs => prevJobs.map(j =>
+                    j.id === job.id ? { ...j, status: Status.ERROR, error: errorMessage, operation: undefined } : j
+                  ));
+                }
+              }
+            })
+            .catch(err => {
+              console.error("Polling failed for job", job.id, err);
+              setJobs(prevJobs => prevJobs.map(j =>
+                j.id === job.id ? { ...j, status: Status.ERROR, error: err.message, operation: undefined } : j
+              ));
+            });
+        }
+      });
+    }, 5000); // Poll every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [jobs]);
+
+  const handleImageChange = async (file: File | null) => {
     setImageFile(file);
     if (imagePreviewUrl) {
       URL.revokeObjectURL(imagePreviewUrl);
-      setImagePreviewUrl(null);
     }
+    const newPreviewUrl = file ? URL.createObjectURL(file) : null;
+    setImagePreviewUrl(newPreviewUrl);
+
+    setGender(null);
+    setGenderError(null);
+
     if (file) {
-      const previewUrl = URL.createObjectURL(file);
-      setImagePreviewUrl(previewUrl);
+      setIsDetectingGender(true);
+      try {
+        const detectedGender = await detectGenderFromImage(file);
+        setGender(detectedGender as Gender);
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "Could not detect gender.";
+        setGenderError(errorMessage);
+        setGender(Gender.MALE); // Default on failure
+      } finally {
+        setIsDetectingGender(false);
+      }
     }
   };
 
-  const convertFileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const result = reader.result as string;
-        // remove the "data:image/jpeg;base64," part
-        resolve(result.split(',')[1]);
+  const createJob = async (image: File, scriptText: string, previewUrl: string, jobGender: Gender) => {
+      const newJob: GenerationJob = {
+        id: `${Date.now()}-${Math.random()}`,
+        status: Status.LOADING,
+        imageFile: image,
+        imagePreviewUrl: previewUrl,
+        script: scriptText,
+        gender: jobGender,
+        progressMessage: "Starting generation...",
       };
-      reader.onerror = error => reject(error);
-    });
+
+      setJobs(prevJobs => [newJob, ...prevJobs]);
+
+      try {
+        const operation = await startVideoGeneration(image, scriptText, jobGender);
+        setJobs(prevJobs => prevJobs.map(j => j.id === newJob.id ? {...j, operation, progressMessage: "Generation in progress..."} : j));
+      } catch (err) {
+         const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
+         setJobs(prevJobs => prevJobs.map(j => j.id === newJob.id ? {...j, status: Status.ERROR, error: errorMessage} : j));
+      }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!imageFile || !script) {
-      setAppState({ status: Status.ERROR, error: 'Please provide both an image and a script.' });
+    if (!imageFile || !script || !imagePreviewUrl) {
+      setError('Please provide both an image and a script.');
       return;
     }
-
-    setAppState({ status: Status.LOADING });
-    setLoadingMessage(LOADING_MESSAGES[0]);
-
-    try {
-      const imageB64 = await convertFileToBase64(imageFile);
-      const videoUrl = await generateLipSyncVideo(imageB64, imageFile.type, script, (message: string) => setLoadingMessage(message));
-      setAppState({ status: Status.SUCCESS, videoUrl });
-    } catch (error) {
-      console.error("Video generation failed:", error);
-      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during video generation.";
-      setAppState({ status: Status.ERROR, error: errorMessage });
+    if (!gender) {
+        setError('Please select a voice gender.');
+        return;
     }
+    setError(null);
+    setIsSubmitting(true);
+
+    await createJob(imageFile, script, imagePreviewUrl, gender);
+
+    // Reset form
+    handleImageChange(null);
+    setScript('');
+    setGender(null);
+    const fileInput = document.getElementById('file-upload-input') as HTMLInputElement;
+    if(fileInput) fileInput.value = "";
+
+    setIsSubmitting(false);
   };
-  
-  const isFormSubmittable = imageFile && script.trim().length > 0 && appState.status !== Status.LOADING;
+
+  const handleCancel = (id: string) => {
+    setJobs(jobs.map(job => job.id === id ? { ...job, status: Status.CANCELLED, operation: undefined } : job));
+  };
+
+  const handleDelete = (id: string) => {
+    const jobToDelete = jobs.find(j => j.id === id);
+    if (jobToDelete) {
+      if (jobToDelete.imagePreviewUrl) URL.revokeObjectURL(jobToDelete.imagePreviewUrl);
+      if (jobToDelete.videoUrl) URL.revokeObjectURL(jobToDelete.videoUrl);
+    }
+    setJobs(jobs.filter(job => job.id !== id));
+  };
+
+  const handleDownload = (job: GenerationJob) => {
+    if(!job.videoUrl) return;
+    const a = document.createElement('a');
+    a.href = job.videoUrl;
+    a.download = `lipsync_video_${job.id}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleRetry = (job: GenerationJob) => {
+    createJob(job.imageFile, job.script, job.imagePreviewUrl, job.gender);
+    setJobs(jobs.filter(j => j.id !== job.id));
+  };
+
+  const isFormSubmittable = imageFile && script.trim().length > 0 && gender && !isSubmitting;
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center p-4 sm:p-6 md:p-8 font-sans">
       <Header />
-      <main className="w-full max-w-4xl mx-auto flex-grow flex flex-col items-center justify-center">
-        <div className="w-full bg-gray-800 rounded-xl shadow-2xl p-6 sm:p-8 md:p-10 border border-gray-700">
-          {appState.status !== Status.SUCCESS ? (
+      <main className="w-full max-w-6xl mx-auto flex-grow flex flex-col items-center">
+        <div className="w-full max-w-4xl bg-gray-800 rounded-xl shadow-2xl p-6 sm:p-8 md:p-10 border border-gray-700 mb-12">
             <form onSubmit={handleSubmit} className="space-y-8">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <FileUpload
                   onFileChange={handleImageChange}
                   previewUrl={imagePreviewUrl}
-                  disabled={appState.status === Status.LOADING}
+                  disabled={isSubmitting}
                 />
-                <div className="flex flex-col">
-                  <label htmlFor="script" className="mb-2 font-semibold text-lg text-teal-300">
-                    2. Enter Your Script
-                  </label>
-                  <textarea
-                    id="script"
-                    value={script}
-                    onChange={(e) => setScript(e.target.value)}
-                    placeholder="Enter the words you want the image to speak..."
-                    className="w-full h-full min-h-[200px] flex-grow bg-gray-700 border border-gray-600 rounded-lg p-4 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition duration-200 text-gray-200 placeholder-gray-400 disabled:opacity-50"
-                    rows={8}
-                    disabled={appState.status === Status.LOADING}
-                  />
+                <div className="flex flex-col space-y-8">
+                    <VoiceSelector
+                        selectedGender={gender}
+                        onGenderChange={(g) => setGender(g)}
+                        isDetecting={isDetectingGender}
+                        error={genderError}
+                        disabled={isSubmitting || !imageFile}
+                    />
+                    <div className="flex flex-col flex-grow">
+                      <label htmlFor="script" className="mb-2 font-semibold text-lg text-teal-300">
+                        3. Enter Your Script
+                      </label>
+                      <textarea
+                        id="script"
+                        value={script}
+                        onChange={(e) => setScript(e.target.value)}
+                        placeholder="Enter the words you want the image to speak..."
+                        className="w-full h-full min-h-[200px] flex-grow bg-gray-700 border border-gray-600 rounded-lg p-4 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition duration-200 text-gray-200 placeholder-gray-400 disabled:opacity-50"
+                        rows={8}
+                        disabled={isSubmitting}
+                      />
+                    </div>
                 </div>
               </div>
+              {error && <p className="text-red-400 text-center">{error}</p>}
               <button
                 type="submit"
                 disabled={!isFormSubmittable}
                 className="w-full py-3 px-6 bg-teal-600 hover:bg-teal-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold text-lg rounded-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center space-x-2"
               >
-                {appState.status === Status.LOADING ? (
+                {isSubmitting ? (
                   <Loader message="" inline={true} />
                 ) : (
                   <>
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <svg xmlns="http://www.w.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                     <span>Generate Video</span>
                   </>
                 )}
               </button>
             </form>
-          ) : null}
-
-          {appState.status === Status.LOADING && <Loader message={loadingMessage} />}
-          
-          {appState.status === Status.ERROR && (
-            <div className="text-center p-4 bg-red-900/50 border border-red-700 rounded-lg">
-              <p className="font-bold text-red-400">Error</p>
-              <p className="text-red-300">{appState.error}</p>
-              <button onClick={() => setAppState({status: Status.IDLE})} className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg">Try Again</button>
-            </div>
-          )}
-
-          {appState.status === Status.SUCCESS && (
-            <div className="text-center">
-              <h2 className="text-2xl font-bold mb-4 text-teal-300">Your Animated Video is Ready!</h2>
-              <VideoPlayer src={appState.videoUrl} />
-              <button
-                onClick={() => {
-                  setAppState({ status: Status.IDLE });
-                  handleImageChange(null);
-                  setScript('');
-                }}
-                className="mt-6 py-2 px-6 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg shadow-lg transition-all duration-300"
-              >
-                Create Another Video
-              </button>
-            </div>
-          )}
         </div>
+
+        {jobs.length > 0 && (
+          <div className="w-full">
+            <h2 className="text-3xl font-bold text-center mb-8 text-teal-300">My Generations</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+              {jobs.map(job => (
+                <GenerationCard
+                  key={job.id}
+                  job={job}
+                  onCancel={handleCancel}
+                  onDelete={handleDelete}
+                  onDownload={handleDownload}
+                  onRetry={handleRetry}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         <footer className="w-full text-center py-6 mt-8 text-gray-500">
             <p>Powered by Gemini. Create, Animate, and Inspire.</p>
         </footer>

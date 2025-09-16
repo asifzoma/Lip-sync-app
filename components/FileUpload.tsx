@@ -1,4 +1,3 @@
-
 import React, { useCallback } from 'react';
 
 interface FileUploadProps {
@@ -55,6 +54,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileChange, previewUrl
           </div>
         )}
         <input
+          id="file-upload-input"
           type="file"
           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           onChange={onFileSelect}

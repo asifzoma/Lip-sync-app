@@ -1,5 +1,5 @@
 {
   "name": "AI Lip Sync Animator",
-  "description": "Bring your photos to life! Upload an image and provide a script, and our AI will generate a video of the person in the image speaking your words. This app uses advanced generative AI to animate a still photo based on a text prompt.",
+  "description": "Bring your photos to life! Upload an image and a script to generate an animated video. Manage multiple video generations at once on your personal dashboard, with options to cancel, retry, download, and delete your creations.",
   "requestFramePermissions": []
 }

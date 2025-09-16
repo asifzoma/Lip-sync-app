@@ -1,13 +1,24 @@
-
 export enum Status {
-  IDLE = 'idle',
   LOADING = 'loading',
   SUCCESS = 'success',
   ERROR = 'error',
+  CANCELLED = 'cancelled',
 }
 
-export type AppState =
-  | { status: Status.IDLE }
-  | { status: Status.LOADING }
-  | { status: Status.SUCCESS; videoUrl: string }
-  | { status: Status.ERROR; error: string };
+export enum Gender {
+  MALE = 'male',
+  FEMALE = 'female',
+}
+
+export interface GenerationJob {
+  id: string;
+  status: Status;
+  imageFile: File;
+  imagePreviewUrl: string;
+  script: string;
+  gender: Gender;
+  videoUrl?: string;
+  error?: string;
+  operation?: any; // The operation object from the VEO API
+  progressMessage: string;
+}

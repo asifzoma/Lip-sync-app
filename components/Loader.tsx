@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 interface LoaderProps {
@@ -21,9 +20,9 @@ export const Loader: React.FC<LoaderProps> = ({ message, inline = false }) => {
     }
 
   return (
-    <div className="flex flex-col items-center justify-center space-y-4 p-8 text-center">
+    <div className="flex flex-col items-center justify-center space-y-4 p-4 text-center h-full">
       <Spinner />
-      <p className="text-lg text-teal-300 font-medium animate-pulse">{message}</p>
+      <p className="text-md text-teal-300 font-medium animate-pulse">{message}</p>
     </div>
   );
 };
