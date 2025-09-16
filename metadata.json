@@ -1,5 +1,5 @@
 {
   "name": "AI Lip Sync Animator",
-  "description": "Bring your photos to life! Upload an image and a script to generate an animated video. Manage multiple video generations at once on your personal dashboard, with options to cancel, retry, download, and delete your creations.",
+  "description": "Upload an image and an audio file to bring your character to life. The AI transcribes the audio and generates a lip-synced video animation.",
   "requestFramePermissions": []
 }

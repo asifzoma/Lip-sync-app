@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 export const Header: React.FC = () => (
@@ -7,7 +6,7 @@ export const Header: React.FC = () => (
       AI Lip Sync Animator
     </h1>
     <p className="mt-3 text-lg text-gray-400 max-w-2xl mx-auto">
-      Bring your photos to life. Upload an image, provide a script, and watch the magic happen.
+      Upload a photo, provide an audio recording, and watch it come to life.
     </p>
   </header>
 );

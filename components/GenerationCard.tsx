@@ -2,6 +2,7 @@ import React from 'react';
 import { GenerationJob, Status, Gender } from '../types';
 import { VideoPlayer } from './VideoPlayer';
 import { Loader } from './Loader';
+import { HighlightedScript } from './HighlightedScript';
 
 interface GenerationCardProps {
   job: GenerationJob;
@@ -11,6 +12,44 @@ interface GenerationCardProps {
   onRetry: (job: GenerationJob) => void;
 }
 
+const getErrorInfo = (errorMessage: string = "An unknown error occurred.") => {
+    const lowerCaseError = errorMessage.toLowerCase();
+
+    const cleanMessage = errorMessage.startsWith('Generation failed: ')
+      ? errorMessage.substring('Generation failed: '.length)
+      : errorMessage;
+
+    if (lowerCaseError.includes('policy') || lowerCaseError.includes('problematic words')) {
+        return {
+            title: 'Policy Violation',
+            message: cleanMessage,
+        };
+    }
+    if (lowerCaseError.includes('api key')) {
+        return {
+            title: 'Configuration Error',
+            message: cleanMessage,
+        };
+    }
+    if (lowerCaseError.includes('quota')) {
+        return {
+            title: 'Quota Exceeded',
+            message: cleanMessage,
+        };
+    }
+     if (lowerCaseError.includes('timed out')) {
+        return {
+            title: 'Request Timed Out',
+            message: cleanMessage,
+        };
+    }
+    return {
+        title: 'Generation Error',
+        message: errorMessage,
+    };
+};
+
+
 export const GenerationCard: React.FC<GenerationCardProps> = ({ job, onCancel, onDelete, onDownload, onRetry }) => {
   const renderContent = () => {
     switch (job.status) {
@@ -18,13 +57,15 @@ export const GenerationCard: React.FC<GenerationCardProps> = ({ job, onCancel, o
         return <Loader message={job.progressMessage} />;
       case Status.SUCCESS:
         return job.videoUrl ? <VideoPlayer src={job.videoUrl} /> : <Loader message="Preparing video..." />;
-      case Status.ERROR:
+      case Status.ERROR: {
+        const { title, message } = getErrorInfo(job.error);
         return (
           <div className="text-center p-4 bg-red-900/50 border border-red-700 rounded-lg h-full flex flex-col justify-center">
-            <p className="font-bold text-red-400">Error</p>
-            <p className="text-red-300 text-sm break-words">{job.error}</p>
+            <p className="font-bold text-red-400">{title}</p>
+            <p className="text-red-300 text-sm break-words mt-1">{message}</p>
           </div>
         );
+      }
       case Status.CANCELLED:
         return (
           <div className="text-center p-4 bg-gray-700/50 border border-gray-600 rounded-lg h-full flex flex-col justify-center">
@@ -60,7 +101,7 @@ export const GenerationCard: React.FC<GenerationCardProps> = ({ job, onCancel, o
         return (
           <div className="flex gap-2">
             <button onClick={() => onRetry(job)} className="flex-1 py-2 px-4 bg-teal-600 hover:bg-teal-500 text-white font-bold rounded-lg transition-colors">
-              Retry
+              Edit & Retry
             </button>
             <button onClick={() => onDelete(job.id)} className="flex-1 py-2 px-4 bg-red-800 hover:bg-red-700 text-white font-bold rounded-lg transition-colors">
               Delete
@@ -90,7 +131,13 @@ export const GenerationCard: React.FC<GenerationCardProps> = ({ job, onCancel, o
          </div>
       </div>
       <div className="p-4 flex-grow flex flex-col justify-between">
-        <div className="min-h-[200px] flex items-center justify-center">
+         <div className="mb-4">
+            <p className="text-sm font-semibold text-gray-400 mb-1">Transcribed Script:</p>
+            <div className="text-xs text-gray-300 bg-gray-900 p-2 rounded-md max-h-20 overflow-y-auto font-mono">
+                 <HighlightedScript script={job.script || "Script will appear here after transcription..."} words={job.offendingWords || []} />
+            </div>
+         </div>
+        <div className="min-h-[150px] flex items-center justify-center">
             {renderContent()}
         </div>
         <div className="mt-4">
